@@ -265,7 +265,7 @@ if __name__ == '__main__':
     elif args.silent:
         logger = logger_setup("ERROR")
     else:
-        logger = logger_setup()
+        logger = logger_setup("NULL")
     
     # attempt to parse the target binary
     try:
