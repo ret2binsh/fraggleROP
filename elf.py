@@ -25,6 +25,7 @@ E_TYPE = {0: "No file type",
 
 E_MACHINE = {0: "No machine",
              3: "Intel 80386 (32-bit)",
+             40: "ARM",
              62: "Advanced Micro Devices X86-64"}
 
 # Define ELF Program Header Constants
