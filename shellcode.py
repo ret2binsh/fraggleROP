@@ -1,4 +1,4 @@
-#/usr/bin/python3
+#!/usr/bin/python3
 
 import ctypes, struct, binascii, socket, argparse
 import netaddr, sys
@@ -282,7 +282,7 @@ if __name__ == '__main__':
         print("Wrong options selected. Use -h for usage.")
         sys.exit()
 
-    with open("generated","wb") as f:
+    with open(args.file,"wb") as f:
 
         f.write(shellcode)
 

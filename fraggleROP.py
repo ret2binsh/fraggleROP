@@ -280,7 +280,6 @@ def file_check(file_name):
     if path.exists(file_name):
         return file_name
     else:
-        print("failiing in file check.")
         print("Failed to open file.")
         sys.exit()
 
